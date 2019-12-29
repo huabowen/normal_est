@@ -40,16 +40,16 @@ void show_normal(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl:
 	}
 }
 
-void filte_r(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,float r){
-		pcl::RadiusOutlierRemoval<pcl::PointXYZ>  rout;
-		rout.setInputCloud(cloud);
-		rout.setRadiusSearch(3.0f*r);//设置搜索半径的值
-		rout.setMinNeighborsInRadius(5);//设置最小邻居个数，默认是1
-		rout.filter(*cloud);
+void filte_r(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, float r) {
+	pcl::RadiusOutlierRemoval<pcl::PointXYZ>  rout;
+	rout.setInputCloud(cloud);
+	rout.setRadiusSearch(3.0f*r);//设置搜索半径的值
+	rout.setMinNeighborsInRadius(10);//设置最小邻居个数，默认是1
+	rout.filter(*cloud);
 }
 
 void normal_to_one(pcl::Normal& normal) {
-	float res = sqrt(pow(normal.normal_x, 2) + pow(normal.normal_y, 2)+ pow(normal.normal_z, 2));
+	float res = sqrt(pow(normal.normal_x, 2) + pow(normal.normal_y, 2) + pow(normal.normal_z, 2));
 	normal.normal_x = normal.normal_x / res;
 	normal.normal_y = normal.normal_y / res;
 	normal.normal_z = normal.normal_z / res;
@@ -93,7 +93,7 @@ pcl::PointCloud<pcl::Normal>::Ptr com_normal(pcl::PointCloud<pcl::PointXYZ>::Ptr
 	return normal;
 }
 
-void com_filter_normal(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, 
+void com_filter_normal(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 	pcl::PointCloud<pcl::Normal>::Ptr normal) {
 
 	pcl::KdTreeFLANN<pcl::PointXYZ>::Ptr tree(new pcl::KdTreeFLANN<pcl::PointXYZ>);
@@ -175,6 +175,7 @@ float com_dis(pcl::PointXYZ p, pcl::PointXYZ center, pcl::PointXYZ pice_center) 
 	return 2.0f*s / a;
 }
 
+
 void com_in_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 	pcl::PointCloud<pcl::Normal>::Ptr normal, vector<int> id, pcl::PointXYZ center) {
 	for (int i = 0; i < id.size(); i++) {
@@ -230,7 +231,7 @@ bool com_know_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 	pcl::PointXYZ pice_center = com_center(cloud, id);
 	vector<int> J;
 	for (int i = 0; i < id.size(); i++) {
-		if (com_dis(cloud->points[id[i]], center, pice_center) < 3.0f) {
+		if (com_dis(cloud->points[id[i]], center, pice_center) <= 1.5f) {
 			J.push_back(id[i]);
 		}
 	}
@@ -243,7 +244,7 @@ bool com_know_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 		if (dis_c_c >= dis_p_c)
 			out = 1;
 	}
-	if (in == out) {
+	if (in == out|| id.size()<50) {
 		return false;
 	}
 	else {
@@ -260,8 +261,6 @@ bool com_know_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 bool com_next_re_direct(pcl::PointCloud<pcl::Normal>::Ptr normal,
 	vector<int> id, vector<int> next_id) {
 
-	if (next_id.size() == 0)
-		return false;
 	pcl::Normal next_avg;
 	for (int i = 0; i < next_id.size(); i++) {
 		next_avg.normal_x += normal->points[next_id[i]].normal_x;
@@ -296,15 +295,24 @@ bool com_unkonw_re_direct(pcl::PointCloud<pcl::Normal>::Ptr normal,
 	//{ 1,0,1 }, { -1,0,1 }, { 1,0,-1 }, { -1,0,-1 },
 	//{ 0,1,1 }, { 0,-1,1 }, { 0,1,-1 }, { 0,-1,-1 },
 	//{1, 1, 1}, { -1,1,1 }, { 1,-1,1 }, { 1,1,-1 }, { -1,-1,1 }, { -1,1,-1 }, { 1,-1,-1 }, { -1,-1,-1 }
-	for (int v = 0; v < vec.size(); v++) {
-		if (judge(voxel, i + vec[v][0], j + vec[v][1], k + vec[v][2]) && 
-			(flag[i + vec[v][0]][j + vec[v][1]][k + vec[v][2]] == true)) {		
-			if (com_next_re_direct(normal, voxel[i][j][k], voxel[i + vec[v][0]][j + vec[v][1]][k + vec[v][2]])) {
+	int zero_count = 0;
+	for (int m = 0; m < vec.size(); m++) {
+		if (judge(voxel, i + vec[m][0], j + vec[m][1], k + vec[m][2]) &&
+			flag[i + vec[m][0]][j + vec[m][1]][k + vec[m][2]]) {
+
+			if (voxel[i + vec[m][0]][j + vec[m][1]][k + vec[m][2]].size() == 0) {
+				zero_count++;
+				continue;
+			}
+			if (com_next_re_direct(normal, voxel[i][j][k], voxel[i + vec[m][0]][j + vec[m][1]][k + vec[m][2]])) {
 				return true;
 			}
 		}
 	}
-	return false;
+	if (zero_count == vec.size())
+		return true;
+	else
+		return false;
 }
 
 void com_normal_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
@@ -330,8 +338,8 @@ void com_normal_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 	for (int i = 0; i < count.x_count; i++) {
 		for (int j = 0; j < count.y_count; j++) {
 			for (int k = 0; k < count.z_count; k++) {
-				flag[i][j][k] = com_know_re_direct(cloud, normal, voxel[i][j][k], center);
-				if (flag[i][j][k]) {
+				if (com_know_re_direct(cloud, normal, voxel[i][j][k], center)) {
+					flag[i][j][k] = true;
 					c++;
 				}
 			}
@@ -341,16 +349,11 @@ void com_normal_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 		for (int i = 0; i < count.x_count; i++) {
 			for (int j = 0; j < count.y_count; j++) {
 				for (int k = 0; k < count.z_count; k++) {
-					if (!flag[i][j][k] && voxel[i][j][k].size() == 0) {
+					//位置方向且可根据周围体素定向，置为已知
+					if (!flag[i][j][k] &&
+						com_unkonw_re_direct(normal, voxel, flag, i, j, k)) {
 						flag[i][j][k] = true;
 						c++;
-						continue;
-					}
-					if (!flag[i][j][k]) {
-						if (com_unkonw_re_direct(normal, voxel, flag, i, j, k)) {
-							flag[i][j][k] = true;
-							c++;
-						}
 					}
 				}
 			}
@@ -382,10 +385,10 @@ int main() {
 		pcl::PointCloud<pcl::Normal>::Ptr normal(new pcl::PointCloud<pcl::Normal>());
 		double start, end;
 		start = GetTickCount();
-		//*normal = *normal_est(cloud, 3.0*leaf_size);
-		*normal = *com_normal(cloud, leaf_size);
+		*normal = *normal_est(cloud, 3.0*leaf_size);
+		//*normal = *com_normal(cloud, leaf_size);
 		//show_normal(cloud, normal);
-		com_filter_normal(cloud, normal);
+		//com_filter_normal(cloud, normal);
 		//show_normal(cloud, normal);
 		com_normal_re_direct(cloud, normal, 10.0f*leaf_size);
 		//com_normal_re_direct(cloud, normal, 20.0f*leaf_size);

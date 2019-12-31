@@ -28,11 +28,13 @@ using namespace std;
 
 void show_normal(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::Normal>::Ptr normal) {
 	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer(new pcl::visualization::PCLVisualizer("Normals"));
-
-	pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> color_cloud(cloud, 255, 0, 0);//关键点
+	viewer->setBackgroundColor(255, 255, 255);
+	pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> color_cloud(cloud, 0, 255, 0);
 	viewer->addPointCloud<pcl::PointXYZ>(cloud, color_cloud, "cloud");
-	viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 1, "cloud");
-	viewer->addPointCloudNormals<pcl::PointXYZ, pcl::Normal>(cloud, normal, 2, 5, "normals");
+	viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 2, "cloud");
+
+	viewer->addPointCloudNormals<pcl::PointXYZ, pcl::Normal>(cloud, normal, 3, 5, "normals");
+	viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_COLOR, 0, 0, 255, "normals");
 	while (!viewer->wasStopped()) {
 		viewer->spinOnce(100);
 		boost::this_thread::sleep(boost::posix_time::microseconds(100000));
@@ -215,14 +217,14 @@ float pot(pcl::Normal& view_vec, pcl::Normal& normal) {
 		view_vec.normal_y*normal.normal_y +
 		view_vec.normal_z*normal.normal_z;
 }
-pcl::Normal com_view_vec(pcl::PointXYZ start, pcl::PointXYZ end) {
+pcl::Normal com_view_vec(pcl::PointXYZ& start, pcl::PointXYZ& end) {
 	pcl::Normal view_vec;
 	view_vec.normal_x = end.x - start.x;
 	view_vec.normal_y = end.y - start.y;
 	view_vec.normal_z = end.z - start.z;
 	return view_vec;
 }
-pcl::Normal com_avg_normal(pcl::PointCloud<pcl::Normal>::Ptr normal, vector<int>& id) {
+pcl::Normal com_avg_normal(pcl::PointCloud<pcl::Normal>::Ptr& normal, vector<int>& id) {
 	pcl::Normal avg_normal;
 	if (id.size() == 0) {
 		avg_normal.normal_x = 0;
@@ -238,21 +240,20 @@ pcl::Normal com_avg_normal(pcl::PointCloud<pcl::Normal>::Ptr normal, vector<int>
 	normal_to_one(avg_normal);
 	return avg_normal;
 }
-
+//计算inside法线
 void com_in_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 	pcl::PointCloud<pcl::Normal>::Ptr normal, vector<int>& id,
-	pcl::Normal& avg_normal, pcl::PointXYZ center) {
+	pcl::Normal& avg_normal, pcl::PointXYZ& center) {
 	for (int i = 0; i < id.size(); i++) {
 		pcl::Normal view_vec = com_view_vec(center, cloud->points[id[i]]);
 		if (pot(view_vec, normal->points[id[i]]) < 0) {
 			reverse_normal(normal->points[id[i]]);
-			reverse_normal(avg_normal);
 		}
 	}
+	avg_normal = com_avg_normal(normal, id);
 	return;
 }
-
-
+//计算outside法线
 void com_out_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 	pcl::PointCloud<pcl::Normal>::Ptr normal, vector<int>& id,
 	pcl::Normal& avg_normal, pcl::PointXYZ center) {
@@ -260,18 +261,19 @@ void com_out_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 		pcl::Normal view_vec = com_view_vec(center, cloud->points[id[i]]);
 		if (pot(view_vec, normal->points[id[i]]) > 0) {
 			reverse_normal(normal->points[id[i]]);
-			reverse_normal(avg_normal);
 		}
 	}
+	avg_normal = com_avg_normal(normal, id);
 	return;
 }
-
+//判断是否越界
 bool judge(vector<vector<vector<vector<int>>>>& voxel, int i, int j, int k) {
 	return (i >= 0 && i < voxel.size() && j >= 0 && j < voxel[0].size() && k >= 0 && k < voxel[0][0].size());
 }
-
+//计算已知方向法线
 bool com_know_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
-	pcl::PointCloud<pcl::Normal>::Ptr normal, vector<int>& id, pcl::Normal& avg_nromal, pcl::PointXYZ center) {
+	pcl::PointCloud<pcl::Normal>::Ptr normal, vector<int>& id, 
+	pcl::Normal& avg_nromal, pcl::PointXYZ center) {
 
 	if (id.size() == 0)
 		return true;
@@ -304,10 +306,9 @@ bool com_know_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 		return true;
 	}
 }
-
+//依靠临近体素计算法线方向
 bool com_next_re_direct(pcl::PointCloud<pcl::Normal>::Ptr normal,
-	vector<int>& id, vector<int>& next_id,
-	pcl::Normal& avg_nromal, pcl::Normal& next_avg_normal) {
+	vector<int>& id, pcl::Normal& avg_nromal, pcl::Normal& next_avg_normal) {
 	if (pot(avg_nromal, next_avg_normal) < 0) {
 		for (int i = 0; i < id.size(); i++) {
 			reverse_normal(normal->points[id[i]]);
@@ -334,22 +335,23 @@ bool com_unkonw_re_direct(pcl::PointCloud<pcl::Normal>::Ptr normal,
 		//{1, 1, 1}, { -1,1,1 }, { 1,-1,1 }, { 1,1,-1 }, { -1,-1,1 }, { -1,1,-1 }, { 1,-1,-1 }, { -1,-1,-1 }
 	};
 
-	int zero_count = 0, count = 0;
+	int zero_count = 0, voxel_count = 0;
 	for (int m = 0; m < vec.size(); m++) {
 		if (judge(voxel, i + vec[m][0], j + vec[m][1], k + vec[m][2])) {
-			count++;
+			voxel_count++;
 			if (voxel[i + vec[m][0]][j + vec[m][1]][k + vec[m][2]].size() == 0) {
 				zero_count++;
 				continue;
 			}
 			if (flag[i + vec[m][0]][j + vec[m][1]][k + vec[m][2]] &&
-				com_next_re_direct(normal, voxel[i][j][k], voxel[i + vec[m][0]][j + vec[m][1]][k + vec[m][2]],
-				avg_normal[i][j][k], avg_normal[i + vec[m][0]][j + vec[m][1]][k + vec[m][2]])) {
+				com_next_re_direct(normal, voxel[i][j][k], 
+				avg_normal[i][j][k], 
+				avg_normal[i + vec[m][0]][j + vec[m][1]][k + vec[m][2]])) {
 				return true;
 			}
 		}
 	}
-	if (zero_count == count)
+	if (zero_count == voxel_count)
 		return true;
 	else
 		return false;
@@ -379,6 +381,7 @@ void com_normal_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 		idz = floor((cloud->points[i].z - xyz.z_min) / r);
 		voxel[idx][idy][idz].push_back(i);
 	}
+	//体素法线定向
 	for (int i = 0; i < count.x_count; i++) {
 		for (int j = 0; j < count.y_count; j++) {
 			for (int k = 0; k < count.z_count; k++) {
@@ -394,7 +397,8 @@ void com_normal_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 			}
 		}
 	}
-
+	show_normal(cloud, normal);
+	//计算outside、inside法线方向，更新flag
 	for (int i = 0; i < count.x_count; i++) {
 		for (int j = 0; j < count.y_count; j++) {
 			for (int k = 0; k < count.z_count; k++) {
@@ -406,6 +410,7 @@ void com_normal_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 		}
 	}
 	//show_normal(cloud, normal, voxel, flag);
+	//将法线均值与邻近法线相反的flag=false
 	for (int i = 0; i < count.x_count; i++) {
 		for (int j = 0; j < count.y_count; j++) {
 			for (int k = 0; k < count.z_count; k++) {
@@ -430,23 +435,9 @@ void com_normal_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 			}
 		}
 	}
+
 	//show_normal(cloud, normal, voxel, flag);
-	for (int i = 0; i < count.x_count; i++) {
-		for (int j = 0; j < count.y_count; j++) {
-			for (int k = 0; k < count.z_count; k++) {
-				if (voxel[i][j][k].size() != 0) {
-					avg_normal[i][j][k] = com_avg_normal(normal, voxel[i][j][k]);
-					for (int m = 0; m < voxel[i][j][k].size(); m++) {
-						if (pot(normal->points[voxel[i][j][k][m]], avg_normal[i][j][k]) < 0) {
-							reverse_normal(normal->points[voxel[i][j][k][m]]);
-						}
-					}
-					avg_normal[i][j][k] = com_avg_normal(normal, voxel[i][j][k]);
-				}
-			}
-		}
-	}
-	//show_normal(cloud, normal, voxel, flag);
+	//计算unkown的法线方向（依赖周围已知法线方向的体素）
 	while (c < total) {
 		for (int i = 0; i < count.x_count; i++) {
 			for (int j = 0; j < count.y_count; j++) {
@@ -520,19 +511,19 @@ void com_normal_re_direct(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,
 }
 
 int main() {
-	string cloud_name;
+	string cloud_name = "cheff";
 	float leaf_size = 1.0f;
-	float voxel = 0;
-	while (cin >> cloud_name >> voxel) {
+	float voxel = 10;
+	while (1) {
 		pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
-		pcl::io::loadPLYFile("D:/PCD/识别点云角度修正/model/filter/" + cloud_name + ".ply", *cloud);
+		pcl::io::loadPLYFile("D:/PCD/识别点云角度修正/scene/filter/" + cloud_name + ".ply", *cloud);
 		filte_r(cloud, leaf_size);
 		pcl::PointCloud<pcl::Normal>::Ptr normal(new pcl::PointCloud<pcl::Normal>());
 		double start, end;
 		start = GetTickCount();
 		*normal = *normal_est(cloud, 5.0*leaf_size);
 		//*normal = *com_normal(cloud, leaf_size);
-		//com_filter_normal(cloud, normal);
+		com_filter_normal(cloud, normal);
 		show_normal(cloud, normal);
 		com_normal_re_direct(cloud, normal, voxel*leaf_size);
 		end = GetTickCount();
